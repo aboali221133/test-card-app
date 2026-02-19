@@ -62,9 +62,9 @@ const translations = {
     noHistory: "لا توجد سجلات بعد..",
     apiKey: "مفتاح API",
     manualKey: "لصق يدوي للمفتاح",
-    testKey: "فحص الاتصال",
+    testKey: "حفظ وربط بالحساب",
     manageKey: "اختيار مفتاح النظام",
-    keyValid: "مفتاح صالح! تم الحفظ والربط.",
+    keyValid: "مفتاح صالح! تم الحفظ في حسابك بنجاح.",
     keyInvalid: "مفتاح غير صالح. يرجى التأكد.",
     preparingQuiz: "جاري تجهيز الاختبار..",
     extractingText: "جاري استخراج النصوص..",
@@ -128,9 +128,9 @@ const translations = {
     noHistory: "No history found.",
     apiKey: "API Key",
     manualKey: "Manual Key",
-    testKey: "Test Connection",
+    testKey: "Save & Link to Account",
     manageKey: "System Key",
-    keyValid: "Key Valid! Saved & Connected.",
+    keyValid: "Key Valid! Saved to your account.",
     keyInvalid: "Invalid Key. Check and retry.",
     preparingQuiz: "Preparing quiz...",
     extractingText: "Extracting text...",
@@ -194,7 +194,7 @@ const translations = {
     noHistory: "Kein Verlauf.",
     apiKey: "API-Key",
     manualKey: "Manueller Key",
-    testKey: "Testen",
+    testKey: "Speichern",
     manageKey: "System-Key",
     keyValid: "Key gültig!",
     keyInvalid: "Ungültig.",
@@ -287,7 +287,8 @@ const App: React.FC = () => {
   const [quizHistory, setQuizHistory] = useState<QuizRecord[]>([]);
 
   // Modes and Keys
-  const [manualKey, setManualKey] = useState(localStorage.getItem('manual_api_key') || '');
+  // تم إزالة قراءة المفتاح من localStorage مباشرة هنا لضمان الخصوصية
+  const [manualKey, setManualKey] = useState('');
   const [isLocalMode, setIsLocalMode] = useState(localStorage.getItem('force_local') === 'true');
   const [keyTesting, setKeyTesting] = useState(false);
   
@@ -329,12 +330,13 @@ const App: React.FC = () => {
   }, [lang]);
 
   // مزامنة المفتاح عند تغير المستخدم
+  // هذا يضمن أن المفتاح يأتي حصراً من بيانات المستخدم المسجل دخوله
   useEffect(() => {
-    if (currentUser?.gemini_api_key) {
-      if (currentUser.gemini_api_key !== manualKey) {
-        setManualKey(currentUser.gemini_api_key);
-        localStorage.setItem('manual_api_key', currentUser.gemini_api_key);
-      }
+    if (currentUser) {
+      setManualKey(currentUser.gemini_api_key || '');
+    } else {
+      // تنظيف المفتاح عند تسجيل الخروج
+      setManualKey('');
     }
   }, [currentUser]);
 
@@ -384,13 +386,15 @@ const App: React.FC = () => {
     const valid = await testApiKey(manualKey);
     setKeyTesting(false);
     if (valid) {
-      localStorage.setItem('manual_api_key', manualKey);
+      // إزالة حفظ المفتاح في localStorage بشكل منفصل
+      // الحفظ يتم فقط داخل كائن المستخدم
       if (currentUser) {
         try {
           await supabase
             .from('app_users')
             .update({ gemini_api_key: manualKey })
             .eq('id', currentUser.id);
+          
           const updatedUser = { ...currentUser, gemini_api_key: manualKey };
           setCurrentUser(updatedUser);
           localStorage.setItem('app_user_session', JSON.stringify(updatedUser));
