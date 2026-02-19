@@ -9,7 +9,7 @@ import {
   Zap, ListChecks, ArrowLeftCircle, Star, History, Copy, ClipboardCheck,
   Calendar, Trash, Edit3, Languages, Globe, Info, ExternalLink,
   Cpu, ZapOff, CloudLightning, ShieldCheck, ShieldAlert,
-  Check, XCircle, SlidersHorizontal
+  Check, XCircle, SlidersHorizontal, Volume2, Book
 } from 'lucide-react';
 import { supabase } from './services/supabase';
 import { 
@@ -92,7 +92,11 @@ const translations = {
     quizType: "نوع الأسئلة",
     mcq: "خيارات متعددة",
     written: "كتابي",
-    startNow: "ابدأ الآن"
+    startNow: "ابدأ الآن",
+    language: "اللغة / Language",
+    notebookView: "عرض الدفتر",
+    readAloud: "قراءة بصوت عالٍ",
+    stopReading: "إيقاف القراءة"
   },
   en: {
     appName: "FlashMind",
@@ -154,7 +158,11 @@ const translations = {
     quizType: "Question Type",
     mcq: "Multiple Choice",
     written: "Written",
-    startNow: "Start Now"
+    startNow: "Start Now",
+    language: "Language",
+    notebookView: "Notebook View",
+    readAloud: "Read Aloud",
+    stopReading: "Stop Reading"
   },
   de: {
     appName: "FlashMind",
@@ -216,7 +224,11 @@ const translations = {
     quizType: "Fragetyp",
     mcq: "Mehrfachauswahl",
     written: "Schriftlich",
-    startNow: "Jetzt starten"
+    startNow: "Jetzt starten",
+    language: "Sprache",
+    notebookView: "Notizbuch",
+    readAloud: "Vorlesen",
+    stopReading: "Stoppen"
   }
 };
 
@@ -267,6 +279,7 @@ const App: React.FC = () => {
   const [showScanner, setShowScanner] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [activeCard, setActiveCard] = useState<Flashcard | null>(null);
   
   const [newSubjectName, setNewSubjectName] = useState('');
   const [newQuestion, setNewQuestion] = useState('');
@@ -296,6 +309,9 @@ const App: React.FC = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
 
+  // Speech Synthesis State
+  const [isSpeaking, setIsSpeaking] = useState(false);
+
   // تهيئة المستخدم عند البدء
   useEffect(() => {
     const savedUser = localStorage.getItem('app_user_session');
@@ -303,13 +319,18 @@ const App: React.FC = () => {
       const user = JSON.parse(savedUser);
       setCurrentUser(user);
     }
+  }, []);
+
+  // تحديث اللغة
+  useEffect(() => {
     localStorage.setItem('app_lang', lang);
+    document.documentElement.lang = lang;
+    document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
   }, [lang]);
 
   // مزامنة المفتاح عند تغير المستخدم
   useEffect(() => {
     if (currentUser?.gemini_api_key) {
-      // إذا كان لدى المستخدم مفتاح في قاعدة البيانات، نستخدمه
       if (currentUser.gemini_api_key !== manualKey) {
         setManualKey(currentUser.gemini_api_key);
         localStorage.setItem('manual_api_key', currentUser.gemini_api_key);
@@ -340,32 +361,41 @@ const App: React.FC = () => {
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000);
   };
 
+  const speak = (text: string) => {
+    if ('speechSynthesis' in window) {
+      if (isSpeaking) {
+        window.speechSynthesis.cancel();
+        setIsSpeaking(false);
+        return;
+      }
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = lang === 'ar' ? 'ar-SA' : (lang === 'de' ? 'de-DE' : 'en-US');
+      utterance.onend = () => setIsSpeaking(false);
+      window.speechSynthesis.speak(utterance);
+      setIsSpeaking(true);
+    } else {
+      addToast("Text-to-speech not supported", "error");
+    }
+  };
+
   const handleTestKey = async () => {
     if (!manualKey) return;
     setKeyTesting(true);
     const valid = await testApiKey(manualKey);
     setKeyTesting(false);
     if (valid) {
-      // 1. Save locally
       localStorage.setItem('manual_api_key', manualKey);
-      
-      // 2. Save to Supabase if logged in
       if (currentUser) {
         try {
           await supabase
             .from('app_users')
             .update({ gemini_api_key: manualKey })
             .eq('id', currentUser.id);
-            
-          // Update local state so it reflects immediately
           const updatedUser = { ...currentUser, gemini_api_key: manualKey };
           setCurrentUser(updatedUser);
           localStorage.setItem('app_user_session', JSON.stringify(updatedUser));
-        } catch (error) {
-          console.error("Failed to save key to DB", error);
-        }
+        } catch (error) { console.error(error); }
       }
-      
       addToast(t.keyValid, 'success');
     } else {
       addToast(t.keyInvalid, 'error');
@@ -452,64 +482,39 @@ const App: React.FC = () => {
 
   const startQuiz = async (fromSelection: boolean = false) => {
     if (isQuizPreparing) return;
-    
-    // 1. Select Cards
     let cardsToUse = fromSelection 
       ? flashcards.filter(c => selectedCardIds.has(c.id))
       : [...flashcards].sort(() => 0.5 - Math.random()).slice(0, Math.min(quizConfig.count, flashcards.length));
 
     if (!cardsToUse || cardsToUse.length === 0) return addToast(t.subjects, 'info');
-    
     setIsQuizPreparing(true);
-    
     try {
-      // 2. Prepare Questions Data
       const preparedQuestions: QuizQuestion[] = [];
       const questionsText = cardsToUse.map(c => c.question);
-      
       const shouldUseAI = aiAvailable && !isLocalMode;
 
-      // Try to get points from AI if enabled, fallback to 5
       let points: number[] = [];
       if (shouldUseAI) {
-        try {
-           points = await assignDifficultyPoints(questionsText, manualKey);
-        } catch (e) {
-           console.warn("AI Points failed, defaulting to 5", e);
-           points = questionsText.map(() => 5);
-        }
-      } else {
-        points = questionsText.map(() => 5);
-      }
+        try { points = await assignDifficultyPoints(questionsText, manualKey); } 
+        catch { points = questionsText.map(() => 5); }
+      } else { points = questionsText.map(() => 5); }
 
-      // 3. Process each card
       for (let i = 0; i < cardsToUse.length; i++) {
         const card = cardsToUse[i];
         const q: QuizQuestion = { ...card, points: points[i] || 5 };
         
         if (quizConfig.type === 'mcq') {
           let distractors: string[] = [];
-          
           if (shouldUseAI) {
             try {
               distractors = await generateQuizOptions(card.question, card.answer, manualKey);
               if (!distractors || distractors.length < 1) throw new Error("Empty AI options");
-            } catch (err) {
-              console.warn("AI MCQ generation failed, falling back to local immediately", err);
-              // Fallback to local immediately
-              distractors = generateLocalDistractors(card.answer, flashcards);
-            }
-          } else {
-            // Local mode forced
-            distractors = generateLocalDistractors(card.answer, flashcards);
-          }
-          
+            } catch { distractors = generateLocalDistractors(card.answer, flashcards); }
+          } else { distractors = generateLocalDistractors(card.answer, flashcards); }
           q.options = [...distractors, card.answer].sort(() => 0.5 - Math.random());
         }
-        
         preparedQuestions.push(q);
       }
-
       setQuizQuestions(preparedQuestions);
       setQuizResults(null);
       setCurrentQuizStep(0);
@@ -517,13 +522,8 @@ const App: React.FC = () => {
       setIsQuizActive(true);
       setShowQuizSetup(false);
       addToast(t.success);
-
-    } catch (error) {
-       console.error("Quiz preparation fatal error", error);
-       addToast(t.error, 'error');
-    } finally {
-      setIsQuizPreparing(false);
-    }
+    } catch { addToast(t.error, 'error'); } 
+    finally { setIsQuizPreparing(false); }
   };
 
   const submitQuizAnswer = async (answer: string) => {
@@ -531,7 +531,6 @@ const App: React.FC = () => {
     const updated = [...quizQuestions];
     const current = updated[currentQuizStep];
     current.userSelection = answer;
-    
     const shouldUseAI = aiAvailable && !isLocalMode;
 
     if (quizConfig.type === 'mcq') {
@@ -548,7 +547,6 @@ const App: React.FC = () => {
             current.isCorrect = result.isCorrect;
             current.aiFeedback = result.feedback;
           } catch {
-             // AI Grade Failed, Fallback
              const result = localGradeAnswer(current.answer, answer);
              current.isCorrect = result.isCorrect;
              current.aiFeedback = result.feedback + " (Local Fallback)";
@@ -666,7 +664,12 @@ const App: React.FC = () => {
                 {loading ? <Loader2 className="animate-spin" /> : (isRegistering ? t.register : t.login)}
               </button>
             </form>
-            <button onClick={() => setIsRegistering(!isRegistering)} className="w-full mt-6 text-indigo-600 font-bold text-sm text-center">
+            <div className="flex justify-center gap-4 mt-6">
+              <button onClick={() => setLang('ar')} className={`text-sm font-bold ${lang === 'ar' ? 'text-indigo-600' : 'text-gray-400'}`}>العربية</button>
+              <button onClick={() => setLang('en')} className={`text-sm font-bold ${lang === 'en' ? 'text-indigo-600' : 'text-gray-400'}`}>English</button>
+              <button onClick={() => setLang('de')} className={`text-sm font-bold ${lang === 'de' ? 'text-indigo-600' : 'text-gray-400'}`}>Deutsch</button>
+            </div>
+            <button onClick={() => setIsRegistering(!isRegistering)} className="w-full mt-4 text-indigo-600 font-bold text-sm text-center">
               {isRegistering ? t.login : t.register}
             </button>
           </div>
@@ -685,7 +688,7 @@ const App: React.FC = () => {
                 onClick={() => setIsLocalMode(!isLocalMode)}
                 className={`w-14 h-7 rounded-full relative transition-all shadow-inner ${aiAvailable ? 'bg-indigo-500' : 'bg-amber-200'}`}
               >
-                <div className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all shadow-md ${isLocalMode ? 'left-1' : 'right-1'}`} />
+                <div className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all shadow-md ${isLocalMode ? (isRtl ? 'left-1' : 'right-1') : (isRtl ? 'right-1' : 'left-1')}`} />
               </button>
             </div>
           </div>
@@ -780,11 +783,15 @@ const App: React.FC = () => {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 text-right">
                   {filteredCards.map(card => (
-                    <div key={card.id} onClick={() => selectionMode && toggleCardSelection(card.id)} className={`bg-white p-10 rounded-[3.5rem] border-2 shadow-sm transition-all group relative cursor-pointer ${selectionMode && selectedCardIds.has(card.id) ? 'border-indigo-600 bg-indigo-50/40 scale-[0.98]' : 'border-gray-50 hover:shadow-2xl hover:border-indigo-100'}`}>
+                    <div 
+                      key={card.id} 
+                      onClick={() => selectionMode ? toggleCardSelection(card.id) : setActiveCard(card)} 
+                      className={`bg-white p-10 rounded-[3.5rem] border-2 shadow-sm transition-all group relative cursor-pointer ${selectionMode && selectedCardIds.has(card.id) ? 'border-indigo-600 bg-indigo-50/40 scale-[0.98]' : 'border-gray-50 hover:shadow-2xl hover:border-indigo-100'}`}
+                    >
                       {selectionMode && <div className={`absolute top-8 ${isRtl ? 'right-8' : 'left-8'} text-indigo-600`}>{selectedCardIds.has(card.id) ? <CheckSquare size={32} /> : <Square size={32} className="text-gray-200" />}</div>}
                       <div className="mb-6">
                         <span className="text-[11px] font-black text-indigo-400 uppercase tracking-widest block mb-3 text-right">{t.question}</span>
-                        <p className="text-2xl font-black text-gray-900 leading-tight text-right">{card.question}</p>
+                        <p className="text-2xl font-black text-gray-900 leading-tight text-right line-clamp-3">{card.question}</p>
                       </div>
                       <div className="pt-6 border-t border-gray-50">
                         <span className="text-[11px] font-black text-emerald-500 uppercase tracking-widest block mb-3 text-right">{t.answer}</span>
@@ -801,6 +808,102 @@ const App: React.FC = () => {
               </div>
             )}
           </main>
+
+          {/* Notebook View Modal */}
+          {activeCard && (
+            <div className="fixed inset-0 z-[800] bg-gray-900/80 backdrop-blur-sm flex items-end md:items-center justify-center p-0 md:p-4 animate-in">
+              <div 
+                className="bg-[#fdfbf7] w-full md:max-w-2xl h-[92vh] md:h-[85vh] rounded-t-[3rem] md:rounded-[3rem] shadow-2xl relative flex flex-col overflow-hidden"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Header */}
+                <div className="p-6 md:p-8 flex justify-between items-center border-b border-gray-200/50 bg-[#fffdf0]/50 backdrop-blur-md">
+                  <div className="flex items-center gap-3 text-gray-500">
+                    <BookOpen size={20} className="text-indigo-400" />
+                    <span className="font-bold text-sm">{selectedSubject?.name}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => speak(activeCard.answer)} className={`p-3 rounded-full transition-all ${isSpeaking ? 'bg-indigo-600 text-white animate-pulse' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'}`}>
+                      {isSpeaking ? <Volume2 size={22} /> : <Volume2 size={22} />}
+                    </button>
+                    <button onClick={() => setActiveCard(null)} className="p-3 bg-gray-100 text-gray-500 hover:bg-red-50 hover:text-red-500 rounded-full transition-all"><X size={22} /></button>
+                  </div>
+                </div>
+                
+                {/* Content - Reader View */}
+                <div className="flex-1 overflow-y-auto p-8 md:p-10 scrollbar-hide">
+                  <h2 className="text-3xl md:text-4xl font-black text-indigo-900 mb-8 leading-tight">{activeCard.question}</h2>
+                  <div className="prose prose-lg max-w-none">
+                    <p className="text-xl md:text-2xl text-gray-800 leading-[2] font-medium whitespace-pre-wrap">{activeCard.answer}</p>
+                  </div>
+                  <div className="h-20"></div> {/* Spacer */}
+                </div>
+
+                {/* Footer Controls */}
+                <div className="p-6 bg-gradient-to-t from-[#fdfbf7] to-transparent flex justify-between items-center">
+                   <button 
+                     onClick={() => { setEditingCard(activeCard); setNewQuestion(activeCard.question); setNewAnswer(activeCard.answer); setShowAddModal(true); setActiveCard(null); }}
+                     className="flex items-center gap-2 text-indigo-600 font-bold px-6 py-3 rounded-2xl hover:bg-indigo-50 transition-all"
+                   >
+                     <Edit3 size={20} />
+                     <span>{t.editCard}</span>
+                   </button>
+                   <span className="text-xs font-black text-gray-300 uppercase tracking-widest">{t.notebookView}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Settings Modal (Updated) */}
+          {showSettings && (
+            <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-md z-[500] flex items-center justify-center p-4">
+              <div className="bg-white w-full max-w-md rounded-[3.5rem] shadow-2xl p-10 animate-in relative overflow-hidden flex flex-col max-h-[90vh] overflow-y-auto">
+                <button onClick={() => setShowSettings(false)} className="absolute top-8 left-8 text-gray-400 hover:text-gray-600"><X size={32} /></button>
+                <div className="flex flex-col items-center mb-8 text-center">
+                  <div className={`w-16 h-16 rounded-[2rem] flex items-center justify-center mb-4 shadow-xl ${aiAvailable ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+                    {aiAvailable ? <ShieldCheck size={32} /> : <ShieldAlert size={32} />}
+                  </div>
+                  <h3 className="font-black text-2xl">{t.settings}</h3>
+                </div>
+                
+                <div className="space-y-8">
+                  {/* Language Switcher */}
+                  <div className="space-y-4">
+                     <label className="text-xs font-black text-gray-400 uppercase px-2 flex items-center gap-2">
+                       <Globe size={14} /> {t.language}
+                     </label>
+                     <div className="grid grid-cols-3 gap-3">
+                        <button onClick={() => setLang('ar')} className={`py-4 rounded-2xl font-bold transition-all border-2 ${lang === 'ar' ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg' : 'bg-gray-50 text-gray-500 border-transparent hover:bg-gray-100'}`}>عربي</button>
+                        <button onClick={() => setLang('en')} className={`py-4 rounded-2xl font-bold transition-all border-2 ${lang === 'en' ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg' : 'bg-gray-50 text-gray-500 border-transparent hover:bg-gray-100'}`}>English</button>
+                        <button onClick={() => setLang('de')} className={`py-4 rounded-2xl font-bold transition-all border-2 ${lang === 'de' ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg' : 'bg-gray-50 text-gray-500 border-transparent hover:bg-gray-100'}`}>DE</button>
+                     </div>
+                  </div>
+
+                  <div className="space-y-4 border-t pt-8 border-gray-50">
+                    <label className="text-xs font-black text-gray-400 uppercase px-2">{t.manualKey}</label>
+                    <div className="flex flex-col gap-3">
+                      <input type="password" placeholder="AI API Key..." className="w-full p-5 bg-gray-50 border-2 border-transparent focus:border-indigo-600 rounded-2xl outline-none font-bold text-sm" value={manualKey} onChange={(e) => setManualKey(e.target.value)} />
+                      <button 
+                        onClick={handleTestKey} 
+                        disabled={keyTesting || !manualKey}
+                        className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-sm flex items-center justify-center gap-2 hover:bg-indigo-700 transition-all disabled:opacity-50"
+                      >
+                        {keyTesting ? <Loader2 className="animate-spin" /> : <CloudLightning size={18} />}
+                        {t.testKey}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 pt-4">
+                    <button onClick={async () => { try { await window.aistudio.openSelectKey(); setShowSettings(false); } catch { addToast(t.error, 'error'); } }} className="w-full flex items-center justify-between p-6 bg-gray-100 text-indigo-600 rounded-3xl font-black text-xl hover:bg-gray-200 transition-all">
+                      <span>{t.manageKey}</span>
+                      <Key size={24} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Quiz Setup Modal (New) */}
           {showQuizSetup && (
@@ -961,46 +1064,6 @@ const App: React.FC = () => {
                     {loading ? <Loader2 className="animate-spin mx-auto" /> : t.create}
                   </button>
                 </form>
-              </div>
-            </div>
-          )}
-
-          {/* Settings with Key Test */}
-          {showSettings && (
-            <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-md z-[500] flex items-center justify-center p-4">
-              <div className="bg-white w-full max-w-md rounded-[3.5rem] shadow-2xl p-12 animate-in relative overflow-hidden">
-                <button onClick={() => setShowSettings(false)} className="absolute top-10 left-10 text-gray-400 hover:text-gray-600"><X size={32} /></button>
-                <div className="flex flex-col items-center mb-10 text-center">
-                  <div className={`w-20 h-20 rounded-[2.5rem] flex items-center justify-center mb-6 shadow-xl ${aiAvailable ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
-                    {aiAvailable ? <ShieldCheck size={40} /> : <ShieldAlert size={40} />}
-                  </div>
-                  <h3 className="font-black text-3xl">{t.settings}</h3>
-                </div>
-                
-                <div className="space-y-8">
-                  <div className="space-y-4">
-                    <label className="text-xs font-black text-gray-400 uppercase px-2">{t.manualKey}</label>
-                    <div className="flex flex-col gap-3">
-                      <input type="password" placeholder="AI API Key..." className="w-full p-5 bg-gray-50 border-2 border-transparent focus:border-indigo-600 rounded-2xl outline-none font-bold text-sm" value={manualKey} onChange={(e) => setManualKey(e.target.value)} />
-                      <button 
-                        onClick={handleTestKey} 
-                        disabled={keyTesting || !manualKey}
-                        className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-sm flex items-center justify-center gap-2 hover:bg-indigo-700 transition-all disabled:opacity-50"
-                      >
-                        {keyTesting ? <Loader2 className="animate-spin" /> : <CloudLightning size={18} />}
-                        {t.testKey}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-4 border-t pt-8 border-gray-50">
-                    <label className="text-xs font-black text-gray-400 uppercase px-2">{t.manageKey}</label>
-                    <button onClick={async () => { try { await window.aistudio.openSelectKey(); setShowSettings(false); } catch { addToast(t.error, 'error'); } }} className="w-full flex items-center justify-between p-6 bg-gray-100 text-indigo-600 rounded-3xl font-black text-xl hover:bg-gray-200 transition-all">
-                      <span>{t.manageKey}</span>
-                      <Key size={24} />
-                    </button>
-                  </div>
-                </div>
               </div>
             </div>
           )}
