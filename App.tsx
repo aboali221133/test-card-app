@@ -9,7 +9,7 @@ import {
   Zap, ListChecks, ArrowLeftCircle, Star, History, Copy, ClipboardCheck,
   Calendar, Trash, Edit3, Languages, Globe, Info, ExternalLink,
   Cpu, ZapOff, CloudLightning, ShieldCheck, ShieldAlert,
-  Check, XCircle
+  Check, XCircle, SlidersHorizontal
 } from 'lucide-react';
 import { supabase } from './services/supabase';
 import { 
@@ -83,11 +83,16 @@ const translations = {
     copied: "تم النسخ إلى الحافظة",
     editCardSuccess: "تم تعديل البطاقة بنجاح",
     addCardSuccess: "تم إضافة البطاقة بنجاح",
-    questionCountHint: "عدد الأسئلة (بحد أقصى {max})",
+    questionCountHint: "عدد الأسئلة (المتوفر: {max})",
     reviewAnswers: "مراجعة الإجابات",
     yourAnswer: "إجابتك",
     correctAnswer: "الإجابة الصحيحة",
-    score: "النتيجة النهائية"
+    score: "النتيجة النهائية",
+    quizSetup: "إعدادات الاختبار",
+    quizType: "نوع الأسئلة",
+    mcq: "خيارات متعددة",
+    written: "كتابي",
+    startNow: "ابدأ الآن"
   },
   en: {
     appName: "FlashMind",
@@ -140,11 +145,16 @@ const translations = {
     copied: "Copied to clipboard",
     editCardSuccess: "Card updated successfully",
     addCardSuccess: "Card added successfully",
-    questionCountHint: "Number of questions (Max {max})",
+    questionCountHint: "Questions Count (Available: {max})",
     reviewAnswers: "Review Answers",
     yourAnswer: "Your Answer",
     correctAnswer: "Correct Answer",
-    score: "Final Score"
+    score: "Final Score",
+    quizSetup: "Quiz Setup",
+    quizType: "Question Type",
+    mcq: "Multiple Choice",
+    written: "Written",
+    startNow: "Start Now"
   },
   de: {
     appName: "FlashMind",
@@ -197,11 +207,16 @@ const translations = {
     copied: "In Zwischenablage kopiert",
     editCardSuccess: "Karte erfolgreich aktualisiert",
     addCardSuccess: "Karte erfolgreich hinzugefügt",
-    questionCountHint: "Anzahl der Fragen (Max {max})",
+    questionCountHint: "Anzahl der Fragen (Verfügbar: {max})",
     reviewAnswers: "Antworten überprüfen",
     yourAnswer: "Ihre Antwort",
     correctAnswer: "Richtige Antwort",
-    score: "Endergebnis"
+    score: "Endergebnis",
+    quizSetup: "Quiz-Setup",
+    quizType: "Fragetyp",
+    mcq: "Mehrfachauswahl",
+    written: "Schriftlich",
+    startNow: "Jetzt starten"
   }
 };
 
@@ -418,7 +433,6 @@ const App: React.FC = () => {
       const preparedQuestions: QuizQuestion[] = [];
       const questionsText = cardsToUse.map(c => c.question);
       
-      // Determine if we should ATTEMPT AI
       const shouldUseAI = aiAvailable && !isLocalMode;
 
       // Try to get points from AI if enabled, fallback to 5
@@ -723,7 +737,7 @@ const App: React.FC = () => {
                       </button>
                     )}
                     {!selectionMode && (
-                      <button onClick={() => setShowQuizSetup(true)} className="px-10 py-5 bg-indigo-600 text-white rounded-[1.8rem] font-black shadow-2xl flex items-center gap-2 hover:bg-indigo-700 active:scale-95">
+                      <button onClick={() => { setQuizConfig(prev => ({ ...prev, count: Math.min(5, flashcards.length) })); setShowQuizSetup(true); }} className="px-10 py-5 bg-indigo-600 text-white rounded-[1.8rem] font-black shadow-2xl flex items-center gap-2 hover:bg-indigo-700 active:scale-95">
                         {isQuizPreparing ? <Loader2 className="animate-spin" /> : <Play size={22} />} {t.startQuiz}
                       </button>
                     )}
@@ -753,6 +767,67 @@ const App: React.FC = () => {
               </div>
             )}
           </main>
+
+          {/* Quiz Setup Modal (New) */}
+          {showQuizSetup && (
+            <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-md z-[500] flex items-center justify-center p-4">
+              <div className="bg-white w-full max-w-md rounded-[3.5rem] shadow-2xl p-10 animate-in relative">
+                <button onClick={() => setShowQuizSetup(false)} className="absolute top-8 left-8 text-gray-400 hover:text-gray-600"><X size={32} /></button>
+                
+                <div className="flex flex-col items-center mb-8">
+                  <div className="w-20 h-20 bg-indigo-50 rounded-[2.5rem] flex items-center justify-center text-indigo-600 mb-4 shadow-lg bg-gradient-to-br from-indigo-50 to-indigo-100">
+                    <SlidersHorizontal size={40} />
+                  </div>
+                  <h3 className="font-black text-3xl text-gray-900">{t.quizSetup}</h3>
+                </div>
+
+                <div className="space-y-8">
+                  <div className="space-y-3">
+                    <label className="text-sm font-black text-gray-500 uppercase px-2">{t.questionCountHint.replace('{max}', flashcards.length.toString())}</label>
+                    <div className="flex items-center gap-4 bg-gray-50 p-2 rounded-2xl border-2 border-transparent focus-within:border-indigo-500">
+                      <button 
+                        onClick={() => setQuizConfig(prev => ({...prev, count: Math.max(1, prev.count - 1)}))}
+                        className="p-3 bg-white rounded-xl shadow-sm hover:scale-105 transition-all text-indigo-600"
+                      ><ChevronLeft size={20} /></button>
+                      <span className="flex-1 text-center font-black text-2xl text-indigo-950">{quizConfig.count}</span>
+                      <button 
+                        onClick={() => setQuizConfig(prev => ({...prev, count: Math.min(flashcards.length, prev.count + 1)}))}
+                        className="p-3 bg-white rounded-xl shadow-sm hover:scale-105 transition-all text-indigo-600"
+                      ><ChevronRight size={20} /></button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <label className="text-sm font-black text-gray-500 uppercase px-2">{t.quizType}</label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button 
+                        onClick={() => setQuizConfig(prev => ({...prev, type: 'mcq'}))}
+                        className={`p-4 rounded-2xl font-bold border-2 transition-all flex flex-col items-center gap-2 ${quizConfig.type === 'mcq' ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-gray-100 text-gray-400 bg-gray-50/50'}`}
+                      >
+                        <ListChecks size={24} />
+                        <span>{t.mcq}</span>
+                      </button>
+                      <button 
+                        onClick={() => setQuizConfig(prev => ({...prev, type: 'written'}))}
+                        className={`p-4 rounded-2xl font-bold border-2 transition-all flex flex-col items-center gap-2 ${quizConfig.type === 'written' ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-gray-100 text-gray-400 bg-gray-50/50'}`}
+                      >
+                        <FileText size={24} />
+                        <span>{t.written}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <button 
+                    onClick={() => startQuiz(false)} 
+                    className="w-full py-6 bg-indigo-600 text-white rounded-[2rem] font-black text-xl hover:bg-indigo-700 shadow-xl hover:shadow-2xl hover:scale-[1.02] transition-all flex items-center justify-center gap-3"
+                  >
+                    <Play size={24} fill="currentColor" />
+                    {t.startNow}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Quiz Overlay */}
           {isQuizActive && (
