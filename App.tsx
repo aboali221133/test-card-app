@@ -64,7 +64,7 @@ const translations = {
     manualKey: "لصق يدوي للمفتاح",
     testKey: "فحص الاتصال",
     manageKey: "اختيار مفتاح النظام",
-    keyValid: "مفتاح صالح! تم الربط بنجاح",
+    keyValid: "مفتاح صالح! تم الحفظ والربط.",
     keyInvalid: "مفتاح غير صالح. يرجى التأكد.",
     preparingQuiz: "جاري تجهيز الاختبار..",
     extractingText: "جاري استخراج النصوص..",
@@ -126,7 +126,7 @@ const translations = {
     manualKey: "Manual Key",
     testKey: "Test Connection",
     manageKey: "System Key",
-    keyValid: "Key Valid! Connected.",
+    keyValid: "Key Valid! Saved & Connected.",
     keyInvalid: "Invalid Key. Check and retry.",
     preparingQuiz: "Preparing quiz...",
     extractingText: "Extracting text...",
@@ -296,11 +296,26 @@ const App: React.FC = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
 
+  // تهيئة المستخدم عند البدء
   useEffect(() => {
     const savedUser = localStorage.getItem('app_user_session');
-    if (savedUser) setCurrentUser(JSON.parse(savedUser));
+    if (savedUser) {
+      const user = JSON.parse(savedUser);
+      setCurrentUser(user);
+    }
     localStorage.setItem('app_lang', lang);
   }, [lang]);
+
+  // مزامنة المفتاح عند تغير المستخدم
+  useEffect(() => {
+    if (currentUser?.gemini_api_key) {
+      // إذا كان لدى المستخدم مفتاح في قاعدة البيانات، نستخدمه
+      if (currentUser.gemini_api_key !== manualKey) {
+        setManualKey(currentUser.gemini_api_key);
+        localStorage.setItem('manual_api_key', currentUser.gemini_api_key);
+      }
+    }
+  }, [currentUser]);
 
   useEffect(() => {
     localStorage.setItem('force_local', isLocalMode.toString());
@@ -331,7 +346,26 @@ const App: React.FC = () => {
     const valid = await testApiKey(manualKey);
     setKeyTesting(false);
     if (valid) {
+      // 1. Save locally
       localStorage.setItem('manual_api_key', manualKey);
+      
+      // 2. Save to Supabase if logged in
+      if (currentUser) {
+        try {
+          await supabase
+            .from('app_users')
+            .update({ gemini_api_key: manualKey })
+            .eq('id', currentUser.id);
+            
+          // Update local state so it reflects immediately
+          const updatedUser = { ...currentUser, gemini_api_key: manualKey };
+          setCurrentUser(updatedUser);
+          localStorage.setItem('app_user_session', JSON.stringify(updatedUser));
+        } catch (error) {
+          console.error("Failed to save key to DB", error);
+        }
+      }
+      
       addToast(t.keyValid, 'success');
     } else {
       addToast(t.keyInvalid, 'error');
