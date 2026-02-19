@@ -42,7 +42,7 @@ export const extractTextFromImages = async (base64Images: string[], customKey?: 
     contents: {
       parts: [
         ...parts,
-        { text: "Extract text from these images accurately. Merge into a logical text, remove overlapping lines between pages, and maintain structure. Detect language automatically." }
+        { text: "STRICT INSTRUCTION: Extract the text from these images exactly as it appears. Return ONLY the raw extracted text. Do NOT add any introductory phrases, conversational filler, markdown code blocks, or explanations like 'Here is the extracted text'. If no text is found, return an empty string." }
       ]
     },
   });

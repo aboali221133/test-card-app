@@ -203,10 +203,8 @@ const CameraScanner: React.FC<CameraScannerProps> = ({ onScan, onClose }) => {
       setTorchOn(!torchOn);
     } catch (e) {
       console.error("Torch error", e);
-      // عرض رسالة خطأ مؤقتة
-      const originalError = error;
-      setError("الفلاش غير مدعوم على هذا الجهاز");
-      setTimeout(() => setError(originalError), 2000);
+      // تم إزالة تعيين الخطأ (setError) هنا لمنع ظهور الشاشة السوداء التي تحجب الكاميرا
+      // في حال فشل الفلاش، سيكمل التطبيق عمله بشكل طبيعي
     }
   };
 
